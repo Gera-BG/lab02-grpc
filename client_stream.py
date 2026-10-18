@@ -21,7 +21,7 @@ def main():
         print(f"  [{i}] {v.filename} - {v.title}")
 
     # Sólo para este ejemplo tomo el primero
-    selected = video_list.videos[1]
+    selected = video_list.videos[0]
     print(f"[CLIENT] Reproduciendo: {selected.filename}")
 
     request = pb2.VideoRequest(filename=selected.filename)

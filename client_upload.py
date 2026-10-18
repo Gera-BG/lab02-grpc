@@ -10,29 +10,35 @@ CHUNK_SIZE = 64 * 1024  # 64KB
 def generate_upload_chunks(filepath, title):
     filename = os.path.basename(filepath)
 
-    # 1) Enviar metadata
-    metadata = pb2.VideoMetadata(
-        filename=filename,
-        title=title
+    # 1) PRIMER CHUNK: Solo Metadata (sin data)
+    yield pb2.UploadChunk(
+        metadata=pb2.VideoMetadata(
+            filename=filename,
+            title=title
+        )
     )
-    yield pb2.UploadChunk(metadata=metadata)
 
-    # 2) Enviar datos del archivo en chunks
+    # 2) CHUNKS SIGUIENTES: Solo datos binarios
     with open(filepath, "rb") as f:
         while True:
-            data = f.read(CHUNK_SIZE)
-            if not data:
+            chunk = f.read(CHUNK_SIZE)
+            if not chunk:
                 break
-            yield pb2.UploadChunk(data=data)
+            yield pb2.UploadChunk(data=chunk)
 
 
 def main():
-    local_video_path = "C:/Users/sauld/Videos/Captures/2025-10-22-22-40-15.mp4"
-    video_title = "No se"
+    # Ruta del archivo MP4 original (fuera de la carpeta 'videos')
+    local_video_path = "C:/Users/Gerardo/Videos/Video2.mp4"
+    video_title = "Video1"
 
     if not os.path.exists(local_video_path):
         print(f"[CLIENT] No se encontró el archivo local: {local_video_path}")
         return
+
+    # Verificar el tamaño real del archivo local
+    total_bytes = os.path.getsize(local_video_path)
+    print(f"[CLIENT] Tamaño del archivo a subir: {total_bytes} bytes")
 
     channel = grpc.insecure_channel("localhost:50051")
     stub = pb2_grpc.VideoServiceStub(channel)

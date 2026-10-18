@@ -22,38 +22,30 @@ class VideoServiceServicer(pb2_grpc.VideoServiceServicer):
 
         try:
             for chunk in request_iterator:
+                # 1. Si el mensaje trae metadata
                 if chunk.HasField("metadata"):
-                    # Primer mensaje con metadata
                     metadata = chunk.metadata
-                    print(f"[SERVER] Recibiendo video: {metadata.filename} - {metadata.title}")
-
                     safe_name = os.path.basename(metadata.filename)
                     file_path = os.path.join(VIDEOS_DIR, safe_name)
                     file = open(file_path, "wb")
+                    print(f"[SERVER] Recibiendo video: {metadata.filename} ({metadata.title})")
 
-                else:
-                    # Datos binarios del archivo
+                # 2. Si el mensaje trae datos binarios
+                elif chunk.HasField("data"):
                     if file is None:
                         context.set_details("No metadata received before data.")
                         context.set_code(grpc.StatusCode.INVALID_ARGUMENT)
-                        return pb2.UploadStatus(
-                            success=False,
-                            message="No metadata received before data.",
-                            stored_filename=""
-                        )
+                        return pb2.UploadStatus(success=False, message="No metadata before data")
                     file.write(chunk.data)
 
             if file:
                 file.close()
 
-            if metadata is None:
-                return pb2.UploadStatus(
-                    success=False,
-                    message="No metadata received.",
-                    stored_filename=""
-                )
+            if metadata is None or file_path is None:
+                return pb2.UploadStatus(success=False, message="No metadata received")
 
-            print(f"[SERVER] Video guardado en: {file_path}")
+            file_size = os.path.getsize(file_path)
+            print(f"[SERVER] Video guardado en: {file_path} ({file_size} bytes)")
 
             return pb2.UploadStatus(
                 success=True,
@@ -62,31 +54,27 @@ class VideoServiceServicer(pb2_grpc.VideoServiceServicer):
             )
 
         except Exception as e:
-            if file:
+            if file and not file.closed:
                 file.close()
             print(f"[SERVER] Error en UploadVideo: {e}")
             context.set_details(str(e))
             context.set_code(grpc.StatusCode.INTERNAL)
-            return pb2.UploadStatus(
-                success=False,
-                message=f"Error uploading video: {e}",
-                stored_filename=""
-            )
-
+            return pb2.UploadStatus(success=False, message=str(e))
+            
     def ListVideos(self, request, context):
         print("[SERVER] Listando videos...")
         videos = []
 
-        for fname in os.listdir(VIDEOS_DIR):
-            if fname.lower().endswith((".mp4", ".avi", ".mkv", ".mov")):
-                info = pb2.VideoInfo(
-                    filename=fname,
-                    title=fname  
-                )
-                videos.append(info)
+        if os.path.exists(VIDEOS_DIR):
+            for fname in os.listdir(VIDEOS_DIR):
+                if fname.lower().endswith((".mp4", ".avi", ".mkv", ".mov")):
+                    info = pb2.VideoInfo(
+                        filename=fname,
+                        title=fname
+                    )
+                    videos.append(info)
 
         return pb2.VideoList(videos=videos)
-
 
     def StreamVideo(self, request, context):
         filename = request.filename
@@ -94,19 +82,28 @@ class VideoServiceServicer(pb2_grpc.VideoServiceServicer):
 
         print(f"[SERVER] StreamVideo solicitado: {video_path}")
 
+        # 1. Verificar existencia del archivo
         if not os.path.exists(video_path):
             context.set_details(f"Video not found: {filename}")
             context.set_code(grpc.StatusCode.NOT_FOUND)
             return
 
+        # 2. Verificar que el archivo no esté vacío (0 bytes)
+        if os.path.getsize(video_path) == 0:
+            print(f"[SERVER] Error: El archivo {filename} tiene 0 bytes.")
+            context.set_details(f"Video file is empty (0 bytes): {filename}")
+            context.set_code(grpc.StatusCode.INVALID_ARGUMENT)
+            return
+
+        # 3. Abrir video con OpenCV
         cap = cv2.VideoCapture(video_path)
         if not cap.isOpened():
+            print(f"[SERVER] OpenCV no pudo abrir: {video_path}")
             context.set_details(f"Cannot open video: {filename}")
             context.set_code(grpc.StatusCode.INTERNAL)
             return
 
         frame_number = 0
-
         fps = cap.get(cv2.CAP_PROP_FPS)
         delay = 1.0 / fps if fps and fps > 0 else 0.03
 
